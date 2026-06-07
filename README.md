@@ -1,10 +1,12 @@
 # G-Remover Backend API
 
-A high-performance, modular backend API built with Rust using the [Axum](https://github.com/tokio-rs/axum) web framework and [Tokio](https://tokio.rs/) async runtime.
+A high-performance, modular backend API built with Rust using the [Axum](https://github.com/tokio-rs/axum) web framework, [Tokio](https://tokio.rs/) async runtime, and [MongoDB](https://www.mongodb.com/) database storage.
 
 ## Tech Stack
 - **Framework**: Axum (v0.7)
 - **Async Runtime**: Tokio
+- **Database**: MongoDB
+- **Authentication**: Bcrypt password hashing & JSON Web Tokens (JWT)
 - **Logging**: Tracing & Tracing-Subscriber
 - **Configuration**: Dotenvy
 - **CORS/Request Logging**: Tower & Tower-HTTP
@@ -18,12 +20,16 @@ backend/
 ├── src/
 │   ├── config.rs      # Environment variables configuration loader
 │   ├── errors.rs      # Centralized error types and JSON API response mappings
-│   ├── main.rs        # Application setup, middleware attachment, server boot
+│   ├── main.rs        # Application setup, DB connection, server boot
+│   ├── state.rs       # Shared AppState struct (holds DB connection & JWT secret)
 │   ├── middleware/    # CORS policies and network logging layers
 │   │   └── mod.rs
+│   ├── models/        # Database document models
+│   │   ├── mod.rs
+│   │   └── user.rs
 │   └── routes/        # Router configuration and API handlers
 │       ├── mod.rs
-│       └── welcome.html # landing portal page
+│       └── auth.rs    # User registration and login handlers
 ├── .env               # Local environment settings
 └── Cargo.toml         # Dependency configurations
 ```
@@ -46,11 +52,14 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
 2. **Configure environment**:
-   Edit `.env` if you wish to change host/port settings:
+   Create a `.env` file (which is ignored by Git via `.gitignore`):
    ```env
    HOST=127.0.0.1
    PORT=8080
    RUST_LOG=backend=debug,tower_http=debug,axum=debug
+   MONGODB_URI=mongodb+srv://...
+   MONGODB_DB_NAME=g_remover
+   JWT_SECRET=your_jwt_secret_key
    ```
 
 3. **Run in Development**:
@@ -59,7 +68,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
 4. **Verify API Endpoints**:
-   - Web Landing Portal: `http://127.0.0.1:8080/`
    - Liveness Check: `http://127.0.0.1:8080/api/health`
    - Metadata / Info: `http://127.0.0.1:8080/api/info`
 
@@ -67,10 +75,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## API Endpoints
 
-### 1. `GET /`
-Serves a responsive landing page with full links, styling, and server-active states.
-
-### 2. `GET /api/health`
+### 1. `GET /api/health`
 Checks whether the service is alive and reachable.
 **Response (JSON)**:
 ```json
@@ -81,17 +86,40 @@ Checks whether the service is alive and reachable.
 }
 ```
 
-### 3. `GET /api/info`
+### 2. `GET /api/info`
 Returns general application metadata, framework, runtime environment, and available routes.
-**Response (JSON)**:
+
+### 3. `POST /api/auth/register`
+Creates a new user profile with password encryption (Bcrypt).
+**Request Body (JSON)**:
 ```json
 {
-  "app_name": "G-Remover API",
-  "version": "0.1.0",
-  "framework": "Axum 0.7",
-  "runtime": "Tokio",
-  "status": "operational",
-  "endpoints": [...]
+  "email": "user@example.com",
+  "password": "securepassword123"
+}
+```
+**Response (201 Created)**:
+```json
+{
+  "status": "success",
+  "message": "User registered successfully"
+}
+```
+
+### 4. `POST /api/auth/login`
+Validates user credentials and issues a signed JSON Web Token (JWT).
+**Request Body (JSON)**:
+```json
+{
+  "email": "user@example.com",
+  "password": "securepassword123"
+}
+```
+**Response (200 OK)**:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer"
 }
 ```
 
