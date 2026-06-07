@@ -9,6 +9,7 @@ use config::Config;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+
 #[tokio::main]
 async fn main() {
     // Load environment variables from .env file
@@ -50,10 +51,45 @@ async fn main() {
     let db = client.database(&config.mongodb_db_name);
     tracing::info!("Successfully connected to database: {}", config.mongodb_db_name);
 
+    // Load ONNX model session using ort (ONNX Runtime)
+    tracing::info!("Loading ONNX background removal model from assets/u2netp.onnx...");
+    let model_path = "assets/u2netp.onnx";
+    
+    // Check if file exists first to provide a friendly error message
+    if !std::path::Path::new(model_path).exists() {
+        tracing::error!("Model file not found at: {}. Please run the download command.", model_path);
+        std::process::exit(1);
+    }
+
+    let model_session = {
+        let mut builder = ort::session::Session::builder().unwrap_or_else(|e| {
+            tracing::error!("Failed to create ONNX session builder: {}", e);
+            std::process::exit(1);
+        });
+        builder = builder.with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3).unwrap_or_else(|e| {
+            tracing::error!("Failed to set optimization level: {}", e);
+            std::process::exit(1);
+        });
+        builder = builder.with_intra_threads(2).unwrap_or_else(|e| {
+            tracing::error!("Failed to set intra threads: {}", e);
+            std::process::exit(1);
+        });
+        match builder.commit_from_file(model_path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to load ONNX model session: {}", e);
+                std::process::exit(1);
+            }
+        }
+    };
+    let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
+    tracing::info!("ONNX model session successfully loaded.");
+
     // Initialize shared AppState
     let state = state::AppState {
         db,
         jwt_secret: config.jwt_secret.clone(),
+        model,
     };
 
     // Construct application router, bind state, and apply middleware

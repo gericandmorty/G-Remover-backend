@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1.39", features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
@@ -17,3 +17,6 @@ thiserror = "1.0"
 mongodb = { version = "3.1.0", features = ["dns-resolver"] }
 bcrypt = "0.15"
 jsonwebtoken = "9.3"
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "ndarray", "tls-rustls"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+ndarray = { version = "0.17", features = ["std"] }
