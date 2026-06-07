@@ -1,13 +1,19 @@
-# Multi-stage build for G-Remover Backend
-FROM rust:slim-bookworm AS builder
+# Multi-stage build for G-Remover Backend using Ubuntu 24.04 to support GLIBC 2.38+
+FROM ubuntu:24.04 AS builder
 
 # Install build dependencies
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
     pkg-config \
     libssl-dev \
     ca-certificates \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /usr/src/app
 
@@ -26,13 +32,14 @@ COPY assets ./assets
 # Build the real binary
 RUN cargo build --release
 
-# Stage 2: Runtime stage
-FROM debian:bookworm-slim
+# Stage 2: Runtime stage (Ubuntu 24.04 to match GLIBC version)
+FROM ubuntu:24.04
 
 # Install runtime dependencies
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    openssl \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
