@@ -1,0 +1,19 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1.39", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+thiserror = "1.0"
+mongodb = { version = "3.1.0", features = ["dns-resolver"] }
+bcrypt = "0.15"
+jsonwebtoken = "9.3"

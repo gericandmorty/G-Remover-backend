@@ -1,0 +1,15 @@
+# Rust build artifacts
+/target/
+
+# Environment configurations and secret credentials
+.env
+cred.txt
+
+# Local IDE configuration directories
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
