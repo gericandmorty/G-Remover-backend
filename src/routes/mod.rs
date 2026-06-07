@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod remove;
 
 use axum::{
     response::IntoResponse,
@@ -7,6 +8,7 @@ use axum::{
 };
 use serde_json::json;
 use std::time::SystemTime;
+
 
 use crate::errors::{AppError, Result};
 use crate::state::AppState;
@@ -18,6 +20,7 @@ pub fn app_router() -> Router<AppState> {
         .route("/api/error-demo", get(error_demo_handler))
         .route("/api/auth/register", post(auth::register_handler))
         .route("/api/auth/login", post(auth::login_handler))
+        .route("/api/v1/remove-background", post(remove::remove_handler))
 }
 
 // Serves system health status
@@ -45,7 +48,8 @@ async fn info_handler() -> impl IntoResponse {
             { "method": "GET", "path": "/api/info", "description": "API details and version" },
             { "method": "GET", "path": "/api/error-demo", "description": "Demonstrates error response mapping" },
             { "method": "POST", "path": "/api/auth/register", "description": "User registration" },
-            { "method": "POST", "path": "/api/auth/login", "description": "User authentication and JWT generation" }
+            { "method": "POST", "path": "/api/auth/login", "description": "User authentication and JWT generation" },
+            { "method": "POST", "path": "/api/v1/remove-background", "description": "Authenticates and removes image backgrounds" }
         ]
     }))
 }
@@ -70,9 +74,15 @@ mod tests {
             .await
             .unwrap();
         let db = client.database("test_db");
+        let model_session = ort::session::Session::builder()
+            .unwrap()
+            .commit_from_file("assets/u2netp.onnx")
+            .unwrap();
+        let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
         AppState {
             db,
             jwt_secret: "mock_jwt_secret_key_for_testing".to_string(),
+            model,
         }
     }
 

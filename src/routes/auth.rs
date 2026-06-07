@@ -18,9 +18,27 @@ pub async fn register_handler(
     if payload.email.trim().is_empty() {
         return Err(AppError::BadRequest("Email cannot be empty".to_string()));
     }
-    if payload.password.len() < 6 {
+
+    let trimmed_password = payload.password.trim();
+
+    if trimmed_password.len() < 8 {
         return Err(AppError::BadRequest(
-            "Password must be at least 6 characters long".to_string(),
+            "Password must be at least 8 characters long".to_string(),
+        ));
+    }
+    if !trimmed_password.chars().any(|c| c.is_uppercase()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one uppercase letter".to_string(),
+        ));
+    }
+    if !trimmed_password.chars().any(|c| c.is_numeric()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one number".to_string(),
+        ));
+    }
+    if !trimmed_password.chars().any(|c| !c.is_alphanumeric()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one special character".to_string(),
         ));
     }
 
@@ -34,7 +52,7 @@ pub async fn register_handler(
     }
 
     // Hash password with bcrypt
-    let password_hash = hash(&payload.password, DEFAULT_COST)
+    let password_hash = hash(trimmed_password, DEFAULT_COST)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
     // Create user document
@@ -63,7 +81,8 @@ pub async fn login_handler(
     Json(payload): Json<LoginPayload>,
 ) -> Result<impl IntoResponse> {
     // Validate inputs
-    if payload.email.trim().is_empty() || payload.password.is_empty() {
+    let trimmed_password = payload.password.trim();
+    if payload.email.trim().is_empty() || trimmed_password.is_empty() {
         return Err(AppError::BadRequest("Email and password are required".to_string()));
     }
 
@@ -75,7 +94,7 @@ pub async fn login_handler(
         .ok_or_else(|| AppError::Unauthorized("Invalid email or password".to_string()))?;
 
     // Verify password hash
-    let is_valid = verify(&payload.password, &user.password)
+    let is_valid = verify(trimmed_password, &user.password)
         .map_err(|e| AppError::Internal(format!("Failed to verify password hash: {}", e)))?;
 
     if !is_valid {
