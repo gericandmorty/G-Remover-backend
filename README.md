@@ -5,12 +5,34 @@ A high-performance, modular backend API built with Rust using the [Axum](https:/
 ## Tech Stack
 - **Framework**: Axum (v0.7)
 - **Async Runtime**: Tokio
+- **AI Inference Engine**: ONNX Runtime via [ort](https://github.com/pykeio/ort) (v2.0.0-rc.12)
+- **Machine Learning Model**: `u2netp` (lightweight U2-Net model for highly precise background removal)
 - **Database**: MongoDB
-- **Authentication**: Bcrypt password hashing & JSON Web Tokens (JWT)
+- **Authentication**: Bcrypt password hashing & JSON Web Tokens (JWT) (Optional)
 - **Logging**: Tracing & Tracing-Subscriber
 - **Configuration**: Dotenvy
 - **CORS/Request Logging**: Tower & Tower-HTTP
 - **Error Handling**: Thiserror
+- **Image Processing**: [image](https://github.com/image-rs/image) & [ndarray](https://github.com/rust-ndarray/ndarray) for tensor manipulation
+
+---
+
+## AI Background Removal Model
+
+The background extraction pipeline utilizes the **u2netp** model (a lightweight, optimized variant of the U2-Net architecture designed for portrait and salient object detection) running on ONNX Runtime.
+
+### Inference Pipeline
+1. **Preprocessing**:
+   - The uploaded image is decoded and resized to $320 \times 320$ pixels.
+   - Channel intensities are normalized using ImageNet mean (`[0.485, 0.456, 0.406]`) and standard deviation (`[0.229, 0.224, 0.225]`).
+   - The normalized channels are rearranged into a standard $1 \times 3 \times 320 \times 320$ shape float tensor.
+2. **ONNX Execution**:
+   - The model is loaded and run in a multi-threaded, optimized ONNX session (`ort` crate).
+   - The model outputs a probability map representing foreground confidence for each pixel.
+3. **Postprocessing**:
+   - The $320 \times 320$ mask is clamped and converted back to a grayscale image.
+   - The mask is scaled back to the original image dimensions using bilinear interpolation.
+   - The mask values are mapped onto the alpha channel of the original image to generate a transparent PNG.
 
 ---
 

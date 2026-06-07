@@ -74,12 +74,11 @@ mod tests {
             .await
             .unwrap();
         let db = client.database("test_db");
-        let model = std::sync::Arc::new(
-            ort::Session::builder()
-                .unwrap()
-                .commit_from_file("assets/u2netp.onnx")
-                .unwrap()
-        );
+        let model_session = ort::session::Session::builder()
+            .unwrap()
+            .commit_from_file("assets/u2netp.onnx")
+            .unwrap();
+        let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
         AppState {
             db,
             jwt_secret: "mock_jwt_secret_key_for_testing".to_string(),

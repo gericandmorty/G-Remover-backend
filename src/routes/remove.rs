@@ -17,26 +17,22 @@ pub async fn remove_handler(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Result<impl IntoResponse> {
-    // 1. Authorize Request
-    let auth_header = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| AppError::Unauthorized("Authorization token missing".to_string()))?;
-
-    if !auth_header.starts_with("Bearer ") {
-        return Err(AppError::Unauthorized("Invalid authorization scheme".to_string()));
+    // 1. Authorize Request (Optional)
+    if let Some(auth_header) = headers.get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
+        if auth_header.starts_with("Bearer ") && auth_header.len() > 7 {
+            let token = &auth_header[7..];
+            if token != "undefined" && token != "null" && !token.is_empty() {
+                // Decode and validate token
+                let _claims = decode::<Claims>(
+                    token,
+                    &DecodingKey::from_secret(state.jwt_secret.as_bytes()),
+                    &Validation::default(),
+                )
+                .map_err(|_| AppError::Unauthorized("Invalid or expired authorization token".to_string()))?
+                .claims;
+            }
+        }
     }
-
-    let token = &auth_header[7..];
-
-    // Decode and validate token
-    let _claims = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(state.jwt_secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map_err(|_| AppError::Unauthorized("Invalid or expired authorization token".to_string()))?
-    .claims;
 
     // 2. Parse Multipart File Upload
     let mut multipart = multipart;
