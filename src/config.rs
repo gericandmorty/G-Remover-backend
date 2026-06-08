@@ -13,7 +13,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Self {
         let host = env::var("HOST")
-            .unwrap_or_else(|_| "127.0.0.1".to_string())
+            .unwrap_or_else(|_| "0.0.0.0".to_string())
             .parse::<IpAddr>()
             .expect("HOST must be a valid IP address");
 

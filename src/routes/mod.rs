@@ -9,18 +9,24 @@ use axum::{
 use serde_json::json;
 use std::time::SystemTime;
 
-
 use crate::errors::{AppError, Result};
+use crate::middleware::RateLimitLayer;
 use crate::state::AppState;
 
 pub fn app_router() -> Router<AppState> {
+    // Apply rate limiting only to the unauthenticated remove-background endpoint.
+    // 10 requests/minute per IP on a sustained basis; burst up to 20.
+    let remove_bg_route = Router::new()
+        .route("/api/v1/remove-background", post(remove::remove_handler))
+        .layer(RateLimitLayer::new(10));
+
     Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/info", get(info_handler))
         .route("/api/error-demo", get(error_demo_handler))
         .route("/api/auth/register", post(auth::register_handler))
         .route("/api/auth/login", post(auth::login_handler))
-        .route("/api/v1/remove-background", post(remove::remove_handler))
+        .merge(remove_bg_route)
 }
 
 // Serves system health status

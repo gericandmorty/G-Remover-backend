@@ -2,6 +2,9 @@ use axum::http::{header, Method};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+pub mod rate_limit;
+pub use rate_limit::RateLimitLayer;
+
 // Configure CORS policy for frontend connection
 pub fn cors_layer() -> CorsLayer {
     CorsLayer::new()
