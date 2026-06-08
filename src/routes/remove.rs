@@ -11,45 +11,109 @@ use crate::errors::{AppError, Result};
 use crate::models::user::Claims;
 use crate::state::AppState;
 
+/// Accepted MIME types for the image field.
+const ACCEPTED_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/jpg", "image/webp"];
+
+/// Magic byte signatures used to validate file content independent of the
+/// Content-Type header (guards against renamed/spoofed extensions).
+fn detect_image_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    // WebP: "RIFF....WEBP"
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
 // POST /api/v1/remove-background
 pub async fn remove_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Result<impl IntoResponse> {
-    // 1. Authorize Request (Optional)
-    if let Some(auth_header) = headers.get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()) {
+
+    // ── 1. Optional JWT validation ────────────────────────────────────────────
+    if let Some(auth_header) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+    {
         if auth_header.starts_with("Bearer ") && auth_header.len() > 7 {
-            let token = &auth_header[7..];
-            if token != "undefined" && token != "null" && !token.is_empty() {
-                // Decode and validate token
-                let _claims = decode::<Claims>(
+            let token = auth_header[7..].trim();
+            if !token.is_empty() && token != "undefined" && token != "null" {
+                decode::<Claims>(
                     token,
                     &DecodingKey::from_secret(state.jwt_secret.as_bytes()),
                     &Validation::default(),
                 )
-                .map_err(|_| AppError::Unauthorized("Invalid or expired authorization token".to_string()))?
-                .claims;
+                .map_err(|e| match e.kind() {
+                    jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                        AppError::Unauthorized("Your session has expired. Please sign in again.".to_string())
+                    }
+                    _ => AppError::Unauthorized("Invalid authorization token.".to_string()),
+                })?;
             }
         }
     }
 
-    // 2. Parse Multipart File Upload
+    // ── 2. Parse multipart upload ─────────────────────────────────────────────
     let mut multipart = multipart;
-    let mut image_bytes = None;
+    let mut image_bytes: Option<Vec<u8>> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::BadRequest(format!("Failed to parse multipart field: {}", e))
+        AppError::BadRequest(format!("Failed to parse multipart upload: {}", e))
     })? {
         let name = field.name().unwrap_or_default().to_string();
+
         if name == "image" {
+            // Capture the declared content-type of this part (may be absent)
+            let declared_content_type: Option<String> = field
+                .content_type()
+                .map(|ct| ct.to_string());
+
+            // Validate declared content-type if present
+            if let Some(ref ct) = declared_content_type {
+                let ct_lower = ct.to_lowercase();
+                let accepted = ACCEPTED_MIME_TYPES
+                    .iter()
+                    .any(|&m| ct_lower.starts_with(m));
+                if !accepted {
+                    return Err(AppError::UnsupportedMediaType(format!(
+                        "Unsupported file type '{}'. Accepted formats: PNG, JPEG, WebP.",
+                        ct
+                    )));
+                }
+            }
+
             let data = field.bytes().await.map_err(|e| {
-                AppError::BadRequest(format!("Failed to read image field bytes: {}", e))
+                AppError::BadRequest(format!("Failed to read uploaded file: {}", e))
             })?;
 
-            // Enforce strict size limit (10MB)
-            if data.len() > 10 * 1024 * 1024 {
-                return Err(AppError::BadRequest("File size exceeds 10MB limit".to_string()));
+            // Size check: 10 MB hard limit
+            const MAX_BYTES: usize = 10 * 1024 * 1024;
+            if data.len() > MAX_BYTES {
+                return Err(AppError::PayloadTooLarge(
+                    "File size exceeds the 10 MB limit. Please upload a smaller image.".to_string(),
+                ));
+            }
+
+            if data.is_empty() {
+                return Err(AppError::BadRequest(
+                    "Uploaded file is empty.".to_string(),
+                ));
+            }
+
+            // Magic-byte validation — catches renamed files (e.g. script.png)
+            if detect_image_format(&data).is_none() {
+                return Err(AppError::UnsupportedMediaType(
+                    "File content does not match a supported image format (PNG, JPEG, WebP). \
+                     Please upload a valid image file."
+                        .to_string(),
+                ));
             }
 
             image_bytes = Some(data.to_vec());
@@ -58,23 +122,44 @@ pub async fn remove_handler(
     }
 
     let raw_bytes = image_bytes.ok_or_else(|| {
-        AppError::BadRequest("No image field found in multipart request".to_string())
+        AppError::BadRequest(
+            "No 'image' field found in the request. \
+             Send the file as multipart/form-data with field name 'image'."
+                .to_string(),
+        )
     })?;
 
-    // 3. Load Image
+    // ── 3. Decode image ───────────────────────────────────────────────────────
     let original_img = image::load_from_memory(&raw_bytes).map_err(|e| {
-        AppError::BadRequest(format!("Invalid image file format: {}", e))
+        tracing::warn!("Image decode failed: {}", e);
+        AppError::UnprocessableEntity(
+            "Could not decode the uploaded image. The file may be corrupt or truncated."
+                .to_string(),
+        )
     })?;
 
     let original_width = original_img.width();
     let original_height = original_img.height();
 
-    // 4. Preprocess Image (Resize to 320x320 & Normalization)
+    // Sanity-check dimensions: reject absurdly small or huge inputs
+    if original_width < 4 || original_height < 4 {
+        return Err(AppError::UnprocessableEntity(
+            "Image dimensions are too small. Minimum size is 4×4 pixels.".to_string(),
+        ));
+    }
+    if original_width > 8000 || original_height > 8000 {
+        return Err(AppError::UnprocessableEntity(
+            "Image dimensions exceed the 8000×8000 pixel limit. \
+             Please downscale the image before uploading."
+                .to_string(),
+        ));
+    }
+
+    // ── 4. Preprocess — resize + ImageNet normalisation ───────────────────────
     let resized_img = original_img.resize_exact(320, 320, image::imageops::FilterType::Triangle);
     let rgb = resized_img.to_rgb8();
 
-    // Normalization constants (ImageNet mean & std)
-    let mean = [0.485f32, 0.456, 0.406];
+    let mean    = [0.485f32, 0.456, 0.406];
     let std_dev = [0.229f32, 0.224, 0.225];
 
     let mut tensor_data = ndarray::Array4::<f32>::zeros((1, 3, 320, 320));
@@ -82,81 +167,67 @@ pub async fn remove_handler(
         for x in 0..320usize {
             let pixel = rgb.get_pixel(x as u32, y as u32);
             for c in 0..3usize {
-                let val = (pixel[c] as f32 / 255.0 - mean[c]) / std_dev[c];
-                tensor_data[[0, c, y, x]] = val;
+                tensor_data[[0, c, y, x]] = (pixel[c] as f32 / 255.0 - mean[c]) / std_dev[c];
             }
         }
     }
 
-    // 5. Run ONNX Model Inference
-    // Convert ndarray -> ort Tensor
+    // ── 5. ONNX inference ─────────────────────────────────────────────────────
     let input_tensor = Tensor::from_array(tensor_data).map_err(|e| {
-        AppError::Internal(format!("Failed to create input tensor: {}", e))
+        AppError::Internal(format!("Failed to build input tensor: {}", e))
     })?;
 
-    // Lock the session (required because Session::run takes &mut self)
     let mut session = state.model.lock().await;
 
     let result = session
         .run(ort::inputs![input_tensor])
-        .map_err(|e| AppError::Internal(format!("Model execution failure: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Model inference failed: {}", e)))?;
 
-    // 6. Extract output tensor - try by name first, fallback to first output by index
-    let has_named = result.get("output.0").is_some();
-    let output_dyn: &ort::value::DynValue = if has_named {
+    // ── 6. Extract output tensor ──────────────────────────────────────────────
+    let output_dyn: &ort::value::DynValue = if result.get("output.0").is_some() {
         result.get("output.0").unwrap()
     } else if result.len() > 0 {
         &result[0usize]
     } else {
-        return Err(AppError::Internal("Model returned no outputs".to_string()));
+        return Err(AppError::Internal("Model returned no outputs.".to_string()));
     };
 
-    // Downcast DynValue -> DynTensor, then extract as f32 ndarray view
     let output_tensor = output_dyn
         .downcast_ref::<ort::value::DynTensorValueType>()
         .map_err(|e| AppError::Internal(format!("Failed to downcast model output: {}", e)))?;
 
     let mask_view = output_tensor
         .try_extract_array::<f32>()
-        .map_err(|e| AppError::Internal(format!("Failed to extract output array: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Failed to read model output array: {}", e)))?;
 
-    // 7. Postprocess Inference Mask
-    // Map probability values back to 320x320 grayscale Luma buffer
+    // ── 7. Postprocess mask ───────────────────────────────────────────────────
     let mut mask_img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(320, 320);
     for y in 0..320u32 {
         for x in 0..320u32 {
-            let prob = mask_view[[0, 0, y as usize, x as usize]];
-            let prob_clamped = prob.clamp(0.0, 1.0);
-            let val = (prob_clamped * 255.0) as u8;
-            mask_img.put_pixel(x, y, Luma([val]));
+            let prob = mask_view[[0, 0, y as usize, x as usize]].clamp(0.0, 1.0);
+            mask_img.put_pixel(x, y, Luma([(prob * 255.0) as u8]));
         }
     }
 
-    // Resize grayscale mask back to match original image dimensions
-    let resized_mask = DynamicImage::ImageLuma8(mask_img).resize_exact(
-        original_width,
-        original_height,
-        image::imageops::FilterType::Triangle,
-    );
+    let resized_mask = DynamicImage::ImageLuma8(mask_img)
+        .resize_exact(original_width, original_height, image::imageops::FilterType::Triangle);
     let mask_luma = resized_mask.to_luma8();
 
-    // 8. Apply Alpha Compositing
+    // ── 8. Alpha compositing ──────────────────────────────────────────────────
     let mut rgba_img = original_img.to_rgba8();
     for y in 0..original_height {
         for x in 0..original_width {
-            let mask_pixel = mask_luma.get_pixel(x, y);
-            let alpha = mask_pixel[0];
-
-            let pixel = rgba_img.get_pixel_mut(x, y);
-            pixel[3] = alpha; // Apply transparency to alpha channel
+            rgba_img.get_pixel_mut(x, y)[3] = mask_luma.get_pixel(x, y)[0];
         }
     }
 
-    // 9. Encode Result to PNG bytes
+    // ── 9. Encode to PNG ──────────────────────────────────────────────────────
     let mut output_bytes = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut output_bytes);
     rgba_img
-        .write_to(&mut cursor, image::ImageFormat::Png)
+        .write_to(
+            &mut std::io::Cursor::new(&mut output_bytes),
+            image::ImageFormat::Png,
+        )
         .map_err(|e| AppError::Internal(format!("Failed to encode output PNG: {}", e)))?;
 
     Ok((
