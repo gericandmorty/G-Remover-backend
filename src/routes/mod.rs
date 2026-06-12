@@ -81,7 +81,7 @@ mod tests {
             .unwrap();
         let db = client.database("test_db");
 
-        let fast_session = ort::session::Session::builder()
+        let session = ort::session::Session::builder()
             .unwrap()
             .with_execution_providers([
                 ort::execution_providers::CPUExecutionProvider::default()
@@ -99,37 +99,14 @@ mod tests {
             .unwrap()
             .with_intra_threads(1)
             .unwrap()
-            .commit_from_file("assets/u2netp.onnx")
+            .commit_from_file("assets/u2netp.onnx") // stub — any small model works for routing tests
             .unwrap();
-        let model_fast = std::sync::Arc::new(tokio::sync::Mutex::new(fast_session));
-
-        let refined_session = ort::session::Session::builder()
-            .unwrap()
-            .with_execution_providers([
-                ort::execution_providers::CPUExecutionProvider::default()
-                    .with_arena_allocator(false)
-                    .build()
-            ])
-            .unwrap()
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
-            .unwrap()
-            .with_memory_pattern(false)
-            .unwrap()
-            .with_config_entry("session.use_memory_arena", "0")
-            .unwrap()
-            .with_config_entry("session.use_arena_allocation", "0")
-            .unwrap()
-            .with_intra_threads(1)
-            .unwrap()
-            .commit_from_file("assets/u2netp.onnx") // stub
-            .unwrap();
-        let model_refined = std::sync::Arc::new(tokio::sync::Mutex::new(refined_session));
+        let model = std::sync::Arc::new(tokio::sync::Mutex::new(session));
 
         AppState {
             db,
             jwt_secret: "mock_jwt_secret_key_for_testing".to_string(),
-            model_fast,
-            model_refined,
+            model,
         }
     }
 
