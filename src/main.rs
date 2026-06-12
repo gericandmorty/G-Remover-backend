@@ -68,6 +68,16 @@ async fn main() {
             std::process::exit(1);
         });
         let builder = builder
+            .with_execution_providers([
+                ort::execution_providers::CPUExecutionProvider::default()
+                    .with_arena_allocator(false)
+                    .build()
+            ])
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to set execution providers (fast): {}", e);
+                std::process::exit(1);
+            });
+        let builder = builder
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap_or_else(|e| {
                 tracing::error!("Failed to set optimization level (fast): {}", e);
@@ -116,6 +126,16 @@ async fn main() {
             tracing::error!("Failed to create ONNX session builder (refined): {}", e);
             std::process::exit(1);
         });
+        let builder = builder
+            .with_execution_providers([
+                ort::execution_providers::CPUExecutionProvider::default()
+                    .with_arena_allocator(false)
+                    .build()
+            ])
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to set execution providers (refined): {}", e);
+                std::process::exit(1);
+            });
         let builder = builder
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap_or_else(|e| {
