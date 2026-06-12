@@ -63,6 +63,7 @@ pub async fn remove_handler(
     // ── 2. Parse multipart upload ─────────────────────────────────────────────
     let mut multipart = multipart;
     let mut image_bytes: Option<Vec<u8>> = None;
+    let mut background_color: String = "transparent".to_string();
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         AppError::BadRequest(format!("Failed to parse multipart upload: {}", e))
@@ -114,7 +115,10 @@ pub async fn remove_handler(
             }
 
             image_bytes = Some(data.to_vec());
-            break;
+        } else if name == "background_color" {
+            if let Ok(value) = field.text().await {
+                background_color = value.trim().to_lowercase();
+            }
         }
     }
 
@@ -152,7 +156,7 @@ pub async fn remove_handler(
     }
 
     // ── 4. Preprocess for RMBG-1.4 (1024×1024, mean=0.5 / std=1.0) ──────────
-    let resized = original_img.resize_exact(1024, 1024, image::imageops::FilterType::Triangle);
+    let resized = original_img.resize_exact(1024, 1024, image::imageops::FilterType::CatmullRom);
     let rgb     = resized.to_rgb8();
 
     let mean = [0.5f32, 0.5, 0.5];
@@ -195,18 +199,19 @@ pub async fn remove_handler(
         .try_extract_array::<f32>()
         .map_err(|e| AppError::Internal(format!("Failed to read output array: {}", e)))?;
 
-    // ── 7. Min-max normalise the raw logits ───────────────────────────────────
-    let mask_slice = mask_view.as_slice().unwrap_or_default();
-    let raw_vals: Vec<f32> = mask_slice.iter().take(1024 * 1024).copied().collect();
-    let min_val = raw_vals.iter().cloned().fold(f32::INFINITY, f32::min);
-    let max_val = raw_vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let range   = (max_val - min_val).max(1e-6);
-
+    // ── 7. Normalise and apply contrast threshold to the mask ──────────────────
     let mut mask_img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(1024, 1024);
     for y in 0..1024u32 {
         for x in 0..1024u32 {
-            let raw        = mask_view[[0, 0, y as usize, x as usize]];
-            let normalised = ((raw - min_val) / range).clamp(0.0, 1.0);
+            let val = mask_view[[0, 0, y as usize, x as usize]];
+            // Remove low-probability background noise (val < 0.15) and stabilize foreground (val > 0.85)
+            let normalised = if val < 0.15 {
+                0.0
+            } else if val > 0.85 {
+                1.0
+            } else {
+                (val - 0.15) / 0.70
+            };
             mask_img.put_pixel(x, y, Luma([(normalised * 255.0) as u8]));
         }
     }
@@ -217,14 +222,32 @@ pub async fn remove_handler(
 
     // ── 8. Resize mask back to original dimensions ────────────────────────────
     let mask_resized = DynamicImage::ImageLuma8(mask_img)
-        .resize_exact(original_width, original_height, image::imageops::FilterType::Triangle)
+        .resize_exact(original_width, original_height, image::imageops::FilterType::CatmullRom)
         .to_luma8();
 
-    // ── 9. Alpha composite — apply mask to original image ────────────────────
+    // ── 9. Compositing — apply mask to original image with selected bg ─────────
     let mut rgba_img = original_img.to_rgba8();
     for y in 0..original_height {
         for x in 0..original_width {
-            rgba_img.get_pixel_mut(x, y)[3] = mask_resized.get_pixel(x, y)[0];
+            let mask_val = mask_resized.get_pixel(x, y)[0] as f32 / 255.0;
+            let orig_px = rgba_img.get_pixel(x, y);
+
+            if background_color == "white" {
+                // Blend color with solid white, set alpha to 255 (fully opaque)
+                let r = (orig_px[0] as f32 * mask_val + 255.0 * (1.0 - mask_val)) as u8;
+                let g = (orig_px[1] as f32 * mask_val + 255.0 * (1.0 - mask_val)) as u8;
+                let b = (orig_px[2] as f32 * mask_val + 255.0 * (1.0 - mask_val)) as u8;
+                rgba_img.put_pixel(x, y, image::Rgba([r, g, b, 255]));
+            } else if background_color == "green" {
+                // Blend color with solid green, set alpha to 255 (fully opaque)
+                let r = (orig_px[0] as f32 * mask_val + 0.0 * (1.0 - mask_val)) as u8;
+                let g = (orig_px[1] as f32 * mask_val + 255.0 * (1.0 - mask_val)) as u8;
+                let b = (orig_px[2] as f32 * mask_val + 0.0 * (1.0 - mask_val)) as u8;
+                rgba_img.put_pixel(x, y, image::Rgba([r, g, b, 255]));
+            } else {
+                // Transparent background - apply mask value directly as alpha channel
+                rgba_img.get_pixel_mut(x, y)[3] = mask_resized.get_pixel(x, y)[0];
+            }
         }
     }
 
