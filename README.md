@@ -6,7 +6,7 @@ A high-performance, modular backend API built with Rust using the [Axum](https:/
 - **Framework**: Axum (v0.7)
 - **Async Runtime**: Tokio
 - **AI Inference Engine**: ONNX Runtime via [ort](https://github.com/pykeio/ort) (v2.0.0-rc.12)
-- **Machine Learning Model**: `u2netp` (lightweight U2-Net model for highly precise background removal)
+- **Machine Learning Model**: `BRIA RMBG-1.4` (ISNet-based high-accuracy background removal model)
 - **Database**: MongoDB
 - **Authentication**: Bcrypt password hashing & JSON Web Tokens (JWT) (Optional)
 - **Logging**: Tracing & Tracing-Subscriber
@@ -17,22 +17,63 @@ A high-performance, modular backend API built with Rust using the [Axum](https:/
 
 ---
 
-## AI Background Removal Model
+## AI Background Removal Pipeline
 
-The background extraction pipeline utilizes the **u2netp** model (a lightweight, optimized variant of the U2-Net architecture designed for portrait and salient object detection) running on ONNX Runtime.
+The background extraction pipeline utilizes a hybrid **Two-Phase Background Removal Pipeline** to achieve both speed and high-precision detail (such as fine hair and complex object edges).
 
-### Inference Pipeline
+```mermaid
+graph TD
+    A[Input Image] --> B[Phase 1: Coarse Cut - u2netp]
+    B --> C[Rough Mask Generated]
+    C --> D[Paint Background White]
+    D --> E[Pre-cleaned Intermediate Image]
+    E --> F[Phase 2: Refined Cut - RMBG-1.4]
+    F --> G[Refined Mask Generated]
+    G --> H[Min-Max Normalization]
+    H --> I[Apply to Original Image Alpha]
+    I --> J[Transparent PNG Output]
+```
+
+### Inference Pipeline Details
+
+#### Phase 1: Coarse Segmentation (u2netp)
 1. **Preprocessing**:
-   - The uploaded image is decoded and resized to $320 \times 320$ pixels.
-   - Channel intensities are normalized using ImageNet mean (`[0.485, 0.456, 0.406]`) and standard deviation (`[0.229, 0.224, 0.225]`).
-   - The normalized channels are rearranged into a standard $1 \times 3 \times 320 \times 320$ shape float tensor.
-2. **ONNX Execution**:
-   - The model is loaded and run in a multi-threaded, optimized ONNX session (`ort` crate).
-   - The model outputs a probability map representing foreground confidence for each pixel.
+   - The input image is resized to $320 \times 320$ pixels.
+   - Channel intensities are normalized using standard ImageNet mean `[0.485, 0.456, 0.406]` and standard deviation `[0.229, 0.224, 0.225]`.
+   - The data is structured into a $1 \times 3 \times 320 \times 320$ float tensor.
+2. **Inference**:
+   - The tensor is processed by **u2netp** (~4.7 MB) via a shared ONNX session.
+   - This produces a low-resolution, high-contrast rough probability mask.
+3. **Composite Masking**:
+   - The rough mask is resized back to the original image dimensions.
+   - Pixels considered background (alpha < 128) are painted pure white, while original foreground pixels are kept. This creates a pre-cleaned, high-contrast intermediate image.
+
+#### Phase 2: High-Resolution Edge Refinement (RMBG-1.4)
+1. **Preprocessing**:
+   - The pre-cleaned intermediate image is resized to $1024 \times 1024$ pixels.
+   - Channel intensities are normalized using mean `[0.5, 0.5, 0.5]` and standard deviation `[1.0, 1.0, 1.0]`, mapping values to the $[-0.5, +0.5]$ range.
+   - The data is shaped into a $1 \times 3 \times 1024 \times 1024$ float tensor.
+2. **Inference**:
+   - The tensor is processed by **BRIA RMBG-1.4** (~170 MB) via a shared ONNX session.
+   - Because the background was already pre-cleaned in Phase 1, RMBG-1.4 focuses its full resolution on detail refinement, alpha matting, and edge smoothing.
 3. **Postprocessing**:
-   - The $320 \times 320$ mask is clamped and converted back to a grayscale image.
-   - The mask is scaled back to the original image dimensions using bilinear interpolation.
-   - The mask values are mapped onto the alpha channel of the original image to generate a transparent PNG.
+   - The $1024 \times 1024$ raw logit mask output by RMBG-1.4 is **min-max normalized** to the $[0, 1]$ range.
+   - The normalized mask is resized back to the original image dimensions and applied directly to the alpha channel of the **original input image** (ensuring perfect color fidelity).
+   - The final transparent PNG is returned.
+
+### Model Files Download
+
+The model files are not committed to the repository. Before running the server, download them into the `assets/` folder:
+
+```bash
+# Download Phase 1 model (u2netp)
+wget -O assets/u2netp.onnx "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
+
+# Download Phase 2 model (RMBG-1.4)
+wget -O assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx"
+```
+
+> **Note**: At boot, both models are loaded into memory and kept active to process requests. Ensure your machine has enough RAM (~1.5 GB minimum recommended).
 
 ---
 
@@ -84,12 +125,17 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    JWT_SECRET=your_jwt_secret_key
    ```
 
-3. **Run in Development**:
+3. **Download the AI Model** (one-time setup):
+   ```bash
+   wget -O assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx"
+   ```
+
+4. **Run in Development** (from the `backend/` directory):
    ```bash
    cargo run
    ```
 
-4. **Verify API Endpoints**:
+5. **Verify API Endpoints**:
    - Liveness Check: `http://127.0.0.1:8080/api/health`
    - Metadata / Info: `http://127.0.0.1:8080/api/info`
 

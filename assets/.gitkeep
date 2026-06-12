@@ -1,0 +1,1 @@
+# Keep directory tracked by git so that the empty assets folder is checked out in CI/CD environments.

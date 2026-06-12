@@ -74,21 +74,31 @@ mod tests {
     };
     use tower::ServiceExt;
 
-    // Helper to generate a dummy AppState for routing test compatibility
+    // Helper to generate a dummy AppState for routing test compatibility.
+    // Both phases point to u2netp.onnx so tests work even without rmbg-1.4.onnx.
     async fn get_mock_state() -> AppState {
         let client = mongodb::Client::with_uri_str("mongodb://localhost:27017")
             .await
             .unwrap();
         let db = client.database("test_db");
-        let model_session = ort::session::Session::builder()
+
+        let fast_session = ort::session::Session::builder()
             .unwrap()
             .commit_from_file("assets/u2netp.onnx")
             .unwrap();
-        let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
+        let model_fast = std::sync::Arc::new(tokio::sync::Mutex::new(fast_session));
+
+        let refined_session = ort::session::Session::builder()
+            .unwrap()
+            .commit_from_file("assets/u2netp.onnx") // stub — rmbg-1.4 may not exist in test env
+            .unwrap();
+        let model_refined = std::sync::Arc::new(tokio::sync::Mutex::new(refined_session));
+
         AppState {
             db,
             jwt_secret: "mock_jwt_secret_key_for_testing".to_string(),
-            model,
+            model_fast,
+            model_refined,
         }
     }
 

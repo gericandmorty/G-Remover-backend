@@ -51,45 +51,86 @@ async fn main() {
     let db = client.database(&config.mongodb_db_name);
     tracing::info!("Successfully connected to database: {}", config.mongodb_db_name);
 
-    // Load ONNX model session using ort (ONNX Runtime)
-    tracing::info!("Loading ONNX background removal model from assets/u2netp.onnx...");
-    let model_path = "assets/u2netp.onnx";
-    
-    // Check if file exists first to provide a friendly error message
-    if !std::path::Path::new(model_path).exists() {
-        tracing::error!("Model file not found at: {}. Please run the download command.", model_path);
+    // ── Load Phase 1 model: u2netp (fast rough cut, 320×320) ─────────────────
+    tracing::info!("Loading Phase 1 model (u2netp) from assets/u2netp.onnx...");
+    let fast_model_path = "assets/u2netp.onnx";
+    if !std::path::Path::new(fast_model_path).exists() {
+        tracing::error!(
+            "Phase 1 model not found at: {}. \
+             Download it from the U2-Net repository or project assets.",
+            fast_model_path
+        );
         std::process::exit(1);
     }
-
-    let model_session = {
-        let mut builder = ort::session::Session::builder().unwrap_or_else(|e| {
-            tracing::error!("Failed to create ONNX session builder: {}", e);
+    let model_fast_session = {
+        let builder = ort::session::Session::builder().unwrap_or_else(|e| {
+            tracing::error!("Failed to create ONNX session builder (fast): {}", e);
             std::process::exit(1);
         });
-        builder = builder.with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3).unwrap_or_else(|e| {
-            tracing::error!("Failed to set optimization level: {}", e);
+        let builder = builder
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to set optimization level (fast): {}", e);
+                std::process::exit(1);
+            });
+        let mut builder = builder.with_intra_threads(2).unwrap_or_else(|e| {
+            tracing::error!("Failed to set intra threads (fast): {}", e);
             std::process::exit(1);
         });
-        builder = builder.with_intra_threads(2).unwrap_or_else(|e| {
-            tracing::error!("Failed to set intra threads: {}", e);
-            std::process::exit(1);
-        });
-        match builder.commit_from_file(model_path) {
+        match builder.commit_from_file(fast_model_path) {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!("Failed to load ONNX model session: {}", e);
+                tracing::error!("Failed to load u2netp model: {}", e);
                 std::process::exit(1);
             }
         }
     };
-    let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
-    tracing::info!("ONNX model session successfully loaded.");
+    let model_fast = std::sync::Arc::new(tokio::sync::Mutex::new(model_fast_session));
+    tracing::info!("Phase 1 model (u2netp) loaded successfully.");
+
+    // ── Load Phase 2 model: BRIA RMBG-1.4 (refined cleanup, 1024×1024) ───────
+    tracing::info!("Loading Phase 2 model (RMBG-1.4) from assets/rmbg-1.4.onnx...");
+    let refined_model_path = "assets/rmbg-1.4.onnx";
+    if !std::path::Path::new(refined_model_path).exists() {
+        tracing::error!(
+            "Phase 2 model not found at: {}. Download it with:\n  \
+            wget -O assets/rmbg-1.4.onnx \"https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx\"",
+            refined_model_path
+        );
+        std::process::exit(1);
+    }
+    let model_refined_session = {
+        let builder = ort::session::Session::builder().unwrap_or_else(|e| {
+            tracing::error!("Failed to create ONNX session builder (refined): {}", e);
+            std::process::exit(1);
+        });
+        let builder = builder
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to set optimization level (refined): {}", e);
+                std::process::exit(1);
+            });
+        let mut builder = builder.with_intra_threads(2).unwrap_or_else(|e| {
+            tracing::error!("Failed to set intra threads (refined): {}", e);
+            std::process::exit(1);
+        });
+        match builder.commit_from_file(refined_model_path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to load RMBG-1.4 model: {}", e);
+                std::process::exit(1);
+            }
+        }
+    };
+    let model_refined = std::sync::Arc::new(tokio::sync::Mutex::new(model_refined_session));
+    tracing::info!("Phase 2 model (RMBG-1.4) loaded successfully.");
 
     // Initialize shared AppState
     let state = state::AppState {
         db,
         jwt_secret: config.jwt_secret.clone(),
-        model,
+        model_fast,
+        model_refined,
     };
 
     // Construct application router, bind state, and apply middleware
