@@ -30,33 +30,6 @@ fn detect_image_format(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-// Helper to initialize an ONNX session with aggressive memory optimizations (fits under 512MB RAM)
-fn load_onnx_session(model_path: &str) -> Result<ort::session::Session> {
-    let builder = ort::session::Session::builder().map_err(|e| {
-        AppError::Internal(format!("Failed to create ONNX session builder: {}", e))
-    })?;
-    let builder = builder
-        .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
-        .map_err(|e| {
-            AppError::Internal(format!("Failed to set optimization level: {}", e))
-        })?;
-    let builder = builder.with_memory_pattern(false).map_err(|e| {
-        AppError::Internal(format!("Failed to disable memory pattern: {}", e))
-    })?;
-    let builder = builder.with_config_entry("session.use_memory_arena", "0").map_err(|e| {
-        AppError::Internal(format!("Failed to disable memory arena: {}", e))
-    })?;
-    let builder = builder.with_config_entry("session.use_arena_allocation", "0").map_err(|e| {
-        AppError::Internal(format!("Failed to disable arena allocation: {}", e))
-    })?;
-    let mut builder = builder.with_intra_threads(1).map_err(|e| {
-        AppError::Internal(format!("Failed to set intra threads: {}", e))
-    })?;
-    builder.commit_from_file(model_path).map_err(|e| {
-        AppError::Internal(format!("Failed to load ONNX model from {}: {}", model_path, e))
-    })
-}
-
 // POST /api/v1/remove-background
 pub async fn remove_handler(
     State(state): State<AppState>,
@@ -205,8 +178,7 @@ pub async fn remove_handler(
         AppError::Internal(format!("Failed to build Phase 1 input tensor: {}", e))
     })?;
 
-    // Load Phase 1 model on-demand to conserve memory on low-resource environments (e.g. Render)
-    let mut session_fast = load_onnx_session("assets/u2netp.onnx")?;
+    let mut session_fast = state.model_fast.lock().await;
     let result_fast = session_fast
         .run(ort::inputs![input_fast])
         .map_err(|e| AppError::Internal(format!("Phase 1 inference failed: {}", e)))?;
@@ -236,7 +208,7 @@ pub async fn remove_handler(
             rough_mask.put_pixel(x, y, Luma([(prob * 255.0) as u8]));
         }
     }
-    // result_fast borrows session_fast — drop them explicitly to release RAM immediately.
+    // result_fast borrows session_fast — drop result first, then release the lock.
     drop(result_fast);
     drop(session_fast);
 
@@ -287,8 +259,7 @@ pub async fn remove_handler(
         AppError::Internal(format!("Failed to build Phase 2 input tensor: {}", e))
     })?;
 
-    // Load Phase 2 model on-demand to conserve memory on low-resource environments (e.g. Render)
-    let mut session_refined = load_onnx_session("assets/rmbg-1.4.onnx")?;
+    let mut session_refined = state.model_refined.lock().await;
     let result_refined = session_refined
         .run(ort::inputs![input_refined])
         .map_err(|e| AppError::Internal(format!("Phase 2 inference failed: {}", e)))?;
@@ -326,7 +297,7 @@ pub async fn remove_handler(
             refined_mask_img.put_pixel(x, y, Luma([(normalised * 255.0) as u8]));
         }
     }
-    // result_refined borrows session_refined — drop them explicitly to release RAM immediately.
+    // result_refined borrows session_refined — drop result first, then release the lock.
     drop(result_refined);
     drop(session_refined);
 
