@@ -68,12 +68,24 @@ async fn main() {
             std::process::exit(1);
         });
         let builder = builder
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap_or_else(|e| {
                 tracing::error!("Failed to set optimization level (fast): {}", e);
                 std::process::exit(1);
             });
-        let mut builder = builder.with_intra_threads(2).unwrap_or_else(|e| {
+        let builder = builder.with_memory_pattern(false).unwrap_or_else(|e| {
+            tracing::error!("Failed to disable memory pattern (fast): {}", e);
+            std::process::exit(1);
+        });
+        let builder = builder.with_config_entry("session.use_memory_arena", "0").unwrap_or_else(|e| {
+            tracing::error!("Failed to disable memory arena (fast): {}", e);
+            std::process::exit(1);
+        });
+        let builder = builder.with_config_entry("session.use_arena_allocation", "0").unwrap_or_else(|e| {
+            tracing::error!("Failed to disable arena allocation (fast): {}", e);
+            std::process::exit(1);
+        });
+        let mut builder = builder.with_intra_threads(1).unwrap_or_else(|e| {
             tracing::error!("Failed to set intra threads (fast): {}", e);
             std::process::exit(1);
         });
@@ -105,12 +117,24 @@ async fn main() {
             std::process::exit(1);
         });
         let builder = builder
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap_or_else(|e| {
                 tracing::error!("Failed to set optimization level (refined): {}", e);
                 std::process::exit(1);
             });
-        let mut builder = builder.with_intra_threads(2).unwrap_or_else(|e| {
+        let builder = builder.with_memory_pattern(false).unwrap_or_else(|e| {
+            tracing::error!("Failed to disable memory pattern (refined): {}", e);
+            std::process::exit(1);
+        });
+        let builder = builder.with_config_entry("session.use_memory_arena", "0").unwrap_or_else(|e| {
+            tracing::error!("Failed to disable memory arena (refined): {}", e);
+            std::process::exit(1);
+        });
+        let builder = builder.with_config_entry("session.use_arena_allocation", "0").unwrap_or_else(|e| {
+            tracing::error!("Failed to disable arena allocation (refined): {}", e);
+            std::process::exit(1);
+        });
+        let mut builder = builder.with_intra_threads(1).unwrap_or_else(|e| {
             tracing::error!("Failed to set intra threads (refined): {}", e);
             std::process::exit(1);
         });
