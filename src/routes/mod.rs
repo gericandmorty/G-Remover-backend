@@ -83,6 +83,12 @@ mod tests {
 
         let fast_session = ort::session::Session::builder()
             .unwrap()
+            .with_execution_providers([
+                ort::execution_providers::CPUExecutionProvider::default()
+                    .with_arena_allocator(false)
+                    .build()
+            ])
+            .unwrap()
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap()
             .with_memory_pattern(false)
@@ -98,6 +104,12 @@ mod tests {
         let model_fast = std::sync::Arc::new(tokio::sync::Mutex::new(fast_session));
 
         let refined_session = ort::session::Session::builder()
+            .unwrap()
+            .with_execution_providers([
+                ort::execution_providers::CPUExecutionProvider::default()
+                    .with_arena_allocator(false)
+                    .build()
+            ])
             .unwrap()
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap()
