@@ -147,9 +147,9 @@ pub async fn remove_handler(
             "Image dimensions are too small. Minimum size is 4×4 pixels.".to_string(),
         ));
     }
-    if original_width > 8000 || original_height > 8000 {
+    if original_width > 4096 || original_height > 4096 {
         return Err(AppError::UnprocessableEntity(
-            "Image dimensions exceed the 8000×8000 pixel limit. \
+            "Image dimensions exceed the 4096×4096 pixel limit. \
              Please downscale the image before uploading."
                 .to_string(),
         ));

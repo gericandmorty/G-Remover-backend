@@ -22,3 +22,4 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 ndarray = { version = "0.17", features = ["std"] }
 dashmap = "6"
 futures = "0.3"
+mimalloc = "0.1"
