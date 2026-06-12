@@ -130,7 +130,29 @@ pub async fn remove_handler(
         )
     })?;
 
-    // ── 3. Decode image ───────────────────────────────────────────────────────
+    // ── 3. Check dimensions BEFORE fully decoding to prevent decompression bombs
+    let reader = image::ImageReader::new(std::io::Cursor::new(&raw_bytes))
+        .with_guessed_format()
+        .map_err(|e| AppError::BadRequest(format!("Failed to guess image format: {}", e)))?;
+
+    let (width, height) = reader.into_dimensions().map_err(|e| {
+        AppError::UnprocessableEntity(format!("Failed to read image dimensions: {}", e))
+    })?;
+
+    if width < 4 || height < 4 {
+        return Err(AppError::UnprocessableEntity(
+            "Image dimensions are too small. Minimum size is 4×4 pixels.".to_string(),
+        ));
+    }
+    if width > 4096 || height > 4096 {
+        return Err(AppError::UnprocessableEntity(
+            "Image dimensions exceed the 4096×4096 pixel limit. \
+             Please downscale the image before uploading."
+                .to_string(),
+        ));
+    }
+
+    // ── 4. Safely decode the image now that dimensions are validated ──────────
     let original_img = image::load_from_memory(&raw_bytes).map_err(|e| {
         tracing::warn!("Image decode failed: {}", e);
         AppError::UnprocessableEntity(
@@ -139,21 +161,8 @@ pub async fn remove_handler(
         )
     })?;
 
-    let original_width  = original_img.width();
-    let original_height = original_img.height();
-
-    if original_width < 4 || original_height < 4 {
-        return Err(AppError::UnprocessableEntity(
-            "Image dimensions are too small. Minimum size is 4×4 pixels.".to_string(),
-        ));
-    }
-    if original_width > 4096 || original_height > 4096 {
-        return Err(AppError::UnprocessableEntity(
-            "Image dimensions exceed the 4096×4096 pixel limit. \
-             Please downscale the image before uploading."
-                .to_string(),
-        ));
-    }
+    let original_width = width;
+    let original_height = height;
 
     // ── 4. Preprocess for RMBG-1.4 (1024×1024, mean=0.5 / std=1.0) ──────────
     let resized = original_img.resize_exact(1024, 1024, image::imageops::FilterType::CatmullRom);

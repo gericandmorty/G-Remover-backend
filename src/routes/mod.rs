@@ -18,7 +18,8 @@ pub fn app_router() -> Router<AppState> {
     // 10 requests/minute per IP on a sustained basis; burst up to 20.
     let remove_bg_route = Router::new()
         .route("/api/v1/remove-background", post(remove::remove_handler))
-        .layer(RateLimitLayer::new(10));
+        .layer(RateLimitLayer::new(10))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(1));
 
     Router::new()
         .route("/api/health", get(health_handler))
