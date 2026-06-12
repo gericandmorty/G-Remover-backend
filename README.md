@@ -54,7 +54,7 @@ graph TD
    - Channel intensities are normalized using mean `[0.5, 0.5, 0.5]` and standard deviation `[1.0, 1.0, 1.0]`, mapping values to the $[-0.5, +0.5]$ range.
    - The data is shaped into a $1 \times 3 \times 1024 \times 1024$ float tensor.
 2. **Inference**:
-   - The tensor is processed by **BRIA RMBG-1.4** (~170 MB) via a shared ONNX session.
+   - The tensor is processed by the **BRIA RMBG-1.4 8-bit quantized model** (~43 MB) via an on-demand ONNX session.
    - Because the background was already pre-cleaned in Phase 1, RMBG-1.4 focuses its full resolution on detail refinement, alpha matting, and edge smoothing.
 3. **Postprocessing**:
    - The $1024 \times 1024$ raw logit mask output by RMBG-1.4 is **min-max normalized** to the $[0, 1]$ range.
@@ -69,11 +69,11 @@ The model files are not committed to the repository. Before running the server, 
 # Download Phase 1 model (u2netp)
 wget -O assets/u2netp.onnx "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
 
-# Download Phase 2 model (RMBG-1.4)
-wget -O assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx"
+# Download Phase 2 model (RMBG-1.4 8-bit quantized)
+wget -O assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx"
 ```
 
-> **Note**: At boot, both models are loaded into memory and kept active to process requests. Ensure your machine has enough RAM (~1.5 GB minimum recommended).
+> **Note**: Both models are loaded **on-demand** and automatically dropped after inference, rather than held persistently in memory. Coupled with the 8-bit quantized Phase 2 model, this keeps peak RAM footprint under **250 MB**, allowing the server to run perfectly on ultra-low-memory hosting (like Render's 512 MB free tier).
 
 ---
 
@@ -125,9 +125,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    JWT_SECRET=your_jwt_secret_key
    ```
 
-3. **Download the AI Model** (one-time setup):
+3. **Download the AI Models** (one-time setup):
    ```bash
-   wget -O assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx"
+   wget -O assets/u2netp.onnx "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
+   wget -O assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx"
    ```
 
 4. **Run in Development** (from the `backend/` directory):
