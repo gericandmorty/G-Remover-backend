@@ -13,3 +13,8 @@ cred.txt
 *.njsproj
 *.sln
 *.sw?
+
+# AI Model Files
+assets/*.onnx
+assets/rmbg-1.4.onnx
+assets/u2netp.onnx
