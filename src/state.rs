@@ -6,6 +6,6 @@ use tokio::sync::Mutex;
 pub struct AppState {
     pub db: Database,
     pub jwt_secret: String,
-    pub model_fast: Arc<Mutex<ort::session::Session>>,
-    pub model_refined: Arc<Mutex<ort::session::Session>>,
+    /// RMBG-1.4 8-bit quantized model (~42 MB) — single-phase pipeline
+    pub model: Arc<Mutex<ort::session::Session>>,
 }

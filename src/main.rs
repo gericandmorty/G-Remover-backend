@@ -51,79 +51,22 @@ async fn main() {
     let db = client.database(&config.mongodb_db_name);
     tracing::info!("Successfully connected to database: {}", config.mongodb_db_name);
 
-    // ── Verify and load Phase 1 model: u2netp (320x320) ──────────────────────
-    let fast_model_path = "assets/u2netp.onnx";
-    if !std::path::Path::new(fast_model_path).exists() {
+    // ── Load RMBG-1.4 (quantized, 1024×1024) ────────────────────────────────
+    // Single-model pipeline: only the 42 MB quantized model runs.
+    // This keeps peak RAM well under 512 MB on Render's free tier.
+    let model_path = "assets/rmbg-1.4.onnx";
+    if !std::path::Path::new(model_path).exists() {
         tracing::error!(
-            "Phase 1 model not found at: {}. \
-             Download it from the U2-Net repository or project assets.",
-            fast_model_path
-        );
-        std::process::exit(1);
-    }
-    tracing::info!("Loading Phase 1 model (u2netp)...");
-    let model_fast_session = {
-        let builder = ort::session::Session::builder().unwrap_or_else(|e| {
-            tracing::error!("Failed to create ONNX session builder (fast): {}", e);
-            std::process::exit(1);
-        });
-        let builder = builder
-            .with_execution_providers([
-                ort::execution_providers::CPUExecutionProvider::default()
-                    .with_arena_allocator(false)
-                    .build()
-            ])
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to set execution providers (fast): {}", e);
-                std::process::exit(1);
-            });
-        let builder = builder
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to set optimization level (fast): {}", e);
-                std::process::exit(1);
-            });
-        let builder = builder.with_memory_pattern(false).unwrap_or_else(|e| {
-            tracing::error!("Failed to disable memory pattern (fast): {}", e);
-            std::process::exit(1);
-        });
-        let builder = builder.with_config_entry("session.use_memory_arena", "0").unwrap_or_else(|e| {
-            tracing::error!("Failed to disable memory arena (fast): {}", e);
-            std::process::exit(1);
-        });
-        let builder = builder.with_config_entry("session.use_arena_allocation", "0").unwrap_or_else(|e| {
-            tracing::error!("Failed to disable arena allocation (fast): {}", e);
-            std::process::exit(1);
-        });
-        let mut builder = builder.with_intra_threads(1).unwrap_or_else(|e| {
-            tracing::error!("Failed to set intra threads (fast): {}", e);
-            std::process::exit(1);
-        });
-        match builder.commit_from_file(fast_model_path) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to load u2netp model: {}", e);
-                std::process::exit(1);
-            }
-        }
-    };
-    let model_fast = std::sync::Arc::new(tokio::sync::Mutex::new(model_fast_session));
-    tracing::info!("Phase 1 model (u2netp) loaded successfully.");
-
-    // ── Verify and load Phase 2 model: RMBG-1.4 (quantized, 1024x1024) ──────
-    let refined_model_path = "assets/rmbg-1.4.onnx";
-    if !std::path::Path::new(refined_model_path).exists() {
-        tracing::error!(
-            "Phase 2 model not found at: {}. Download it with:\n  \
+            "Model not found at: {}. Download it with:\n  \
             wget -O assets/rmbg-1.4.onnx \"https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx\"",
-            refined_model_path
+            model_path
         );
         std::process::exit(1);
     }
-    tracing::info!("Loading Phase 2 model (RMBG-1.4 quantized)...");
-    let model_refined_session = {
+    tracing::info!("Loading RMBG-1.4 (quantized) model...");
+    let model_session = {
         let builder = ort::session::Session::builder().unwrap_or_else(|e| {
-            tracing::error!("Failed to create ONNX session builder (refined): {}", e);
+            tracing::error!("Failed to create ONNX session builder: {}", e);
             std::process::exit(1);
         });
         let builder = builder
@@ -133,32 +76,36 @@ async fn main() {
                     .build()
             ])
             .unwrap_or_else(|e| {
-                tracing::error!("Failed to set execution providers (refined): {}", e);
+                tracing::error!("Failed to set execution providers: {}", e);
                 std::process::exit(1);
             });
         let builder = builder
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Disable)
             .unwrap_or_else(|e| {
-                tracing::error!("Failed to set optimization level (refined): {}", e);
+                tracing::error!("Failed to set optimization level: {}", e);
                 std::process::exit(1);
             });
         let builder = builder.with_memory_pattern(false).unwrap_or_else(|e| {
-            tracing::error!("Failed to disable memory pattern (refined): {}", e);
+            tracing::error!("Failed to disable memory pattern: {}", e);
             std::process::exit(1);
         });
-        let builder = builder.with_config_entry("session.use_memory_arena", "0").unwrap_or_else(|e| {
-            tracing::error!("Failed to disable memory arena (refined): {}", e);
-            std::process::exit(1);
-        });
-        let builder = builder.with_config_entry("session.use_arena_allocation", "0").unwrap_or_else(|e| {
-            tracing::error!("Failed to disable arena allocation (refined): {}", e);
-            std::process::exit(1);
-        });
+        let builder = builder
+            .with_config_entry("session.use_memory_arena", "0")
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to disable memory arena: {}", e);
+                std::process::exit(1);
+            });
+        let builder = builder
+            .with_config_entry("session.use_arena_allocation", "0")
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to disable arena allocation: {}", e);
+                std::process::exit(1);
+            });
         let mut builder = builder.with_intra_threads(1).unwrap_or_else(|e| {
-            tracing::error!("Failed to set intra threads (refined): {}", e);
+            tracing::error!("Failed to set intra threads: {}", e);
             std::process::exit(1);
         });
-        match builder.commit_from_file(refined_model_path) {
+        match builder.commit_from_file(model_path) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("Failed to load RMBG-1.4 model: {}", e);
@@ -166,15 +113,14 @@ async fn main() {
             }
         }
     };
-    let model_refined = std::sync::Arc::new(tokio::sync::Mutex::new(model_refined_session));
-    tracing::info!("Phase 2 model (RMBG-1.4 quantized) loaded successfully.");
+    let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
+    tracing::info!("RMBG-1.4 (quantized) loaded successfully.");
 
-    // Initialize shared AppState (persistent optimized sessions)
+    // Initialize shared AppState
     let state = state::AppState {
         db,
         jwt_secret: config.jwt_secret.clone(),
-        model_fast,
-        model_refined,
+        model,
     };
 
     // Construct application router, bind state, and apply middleware
