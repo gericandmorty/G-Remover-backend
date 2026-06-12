@@ -101,8 +101,12 @@ async fn main() {
                 tracing::error!("Failed to disable arena allocation: {}", e);
                 std::process::exit(1);
             });
-        let mut builder = builder.with_intra_threads(1).unwrap_or_else(|e| {
+        let builder = builder.with_intra_threads(1).unwrap_or_else(|e| {
             tracing::error!("Failed to set intra threads: {}", e);
+            std::process::exit(1);
+        });
+        let mut builder = builder.with_inter_threads(1).unwrap_or_else(|e| {
+            tracing::error!("Failed to set inter threads: {}", e);
             std::process::exit(1);
         });
         match builder.commit_from_file(model_path) {

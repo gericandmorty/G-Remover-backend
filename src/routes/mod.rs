@@ -99,6 +99,8 @@ mod tests {
             .unwrap()
             .with_intra_threads(1)
             .unwrap()
+            .with_inter_threads(1)
+            .unwrap()
             .commit_from_file("assets/u2netp.onnx") // stub — any small model works for routing tests
             .unwrap();
         let model = std::sync::Arc::new(tokio::sync::Mutex::new(session));
