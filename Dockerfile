@@ -29,6 +29,17 @@ RUN rm -rf src/ target/release/deps/backend*
 COPY src ./src
 COPY assets ./assets
 
+# Ensure models are downloaded if missing (useful for cloud/CI builds where assets/*.onnx are git-ignored)
+RUN mkdir -p assets && \
+    if [ ! -f assets/u2netp.onnx ]; then \
+        echo "Downloading Phase 1 model (u2netp)..." && \
+        curl -L -o assets/u2netp.onnx "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"; \
+    fi && \
+    if [ ! -f assets/rmbg-1.4.onnx ]; then \
+        echo "Downloading Phase 2 model (RMBG-1.4)..." && \
+        curl -L -o assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx"; \
+    fi
+
 # Build the real binary
 RUN cargo build --release
 
