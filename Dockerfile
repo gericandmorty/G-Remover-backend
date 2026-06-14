@@ -28,12 +28,12 @@ RUN rm -rf src/ target/release/deps/backend*
 # Copy assets folder (which contains .gitkeep to ensure the directory is created)
 COPY assets ./assets
 
-# Download the quantized RMBG-1.4 model (~42 MB) if not already present
-RUN if [ ! -f assets/rmbg-1.4.onnx ]; then \
-        echo "Downloading RMBG-1.4 quantized model..." && \
-        curl -L -o assets/rmbg-1.4.onnx "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx"; \
+# Download the U2Netp model if it's not present (e.g. when building on Render where it is gitignored)
+RUN if [ ! -f assets/u2netp.onnx ]; then \
+        curl -L -o assets/u2netp.onnx https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx; \
     fi
 
+# Model is assumed to be in the assets folder
 # Copy the actual source code
 COPY src ./src
 
