@@ -54,19 +54,15 @@ async fn main() {
     let db = client.database(&config.mongodb_db_name);
     tracing::info!("Successfully connected to database: {}", config.mongodb_db_name);
 
-    // ── Load RMBG-1.4 (quantized, 1024×1024) ────────────────────────────────
-    // Single-model pipeline: only the 42 MB quantized model runs.
+    // ── Load U2Netp (tiny, 320x320) ────────────────────────────────
+    // Single-model pipeline: only the 4.5 MB u2netp model runs.
     // This keeps peak RAM well under 512 MB on Render's free tier.
-    let model_path = "assets/rmbg-1.4.onnx";
+    let model_path = "assets/u2netp.onnx";
     if !std::path::Path::new(model_path).exists() {
-        tracing::error!(
-            "Model not found at: {}. Download it with:\n  \
-            wget -O assets/rmbg-1.4.onnx \"https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx\"",
-            model_path
-        );
+        tracing::error!("Model not found at: {}", model_path);
         std::process::exit(1);
     }
-    tracing::info!("Loading RMBG-1.4 (quantized) model...");
+    tracing::info!("Loading U2Netp model...");
     let model_session = {
         let builder = ort::session::Session::builder().unwrap_or_else(|e| {
             tracing::error!("Failed to create ONNX session builder: {}", e);
@@ -121,7 +117,7 @@ async fn main() {
         }
     };
     let model = std::sync::Arc::new(tokio::sync::Mutex::new(model_session));
-    tracing::info!("RMBG-1.4 (quantized) loaded successfully.");
+    tracing::info!("U2Netp loaded successfully.");
 
     // Initialize shared AppState
     let state = state::AppState {

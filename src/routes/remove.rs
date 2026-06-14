@@ -144,9 +144,9 @@ pub async fn remove_handler(
             "Image dimensions are too small. Minimum size is 4×4 pixels.".to_string(),
         ));
     }
-    if width > 4096 || height > 4096 {
+    if width > 2048 || height > 2048 {
         return Err(AppError::UnprocessableEntity(
-            "Image dimensions exceed the 4096×4096 pixel limit. \
+            "Image dimensions exceed the 2048×2048 pixel limit. \
              Please downscale the image before uploading."
                 .to_string(),
         ));
@@ -164,16 +164,20 @@ pub async fn remove_handler(
     let original_width = width;
     let original_height = height;
 
-    // ── 4. Preprocess for RMBG-1.4 (1024×1024, mean=0.5 / std=1.0) ──────────
-    let resized = original_img.resize_exact(1024, 1024, image::imageops::FilterType::CatmullRom);
-    let rgb     = resized.to_rgb8();
+    // ── 4. Preprocess for U2Netp (320x320, max normalization) ──────────
+    let resized = original_img.resize_exact(320, 320, image::imageops::FilterType::Triangle);
+    let rgb     = resized.into_rgb8();
 
-    let mean = [0.5f32, 0.5, 0.5];
-    let std  = [1.0f32, 1.0, 1.0];
+    let mut tensor = ndarray::Array4::<f32>::zeros((1, 3, 320, 320));
+    
+    // U2Netp normalization: (pixel / 255.0 - 0.485) / 0.229 (approximate ImageNet or max division)
+    // The previous U2Netp implementation used specific mean/std or min-max normalization. 
+    // Here we use standard ImageNet mean/std which works for most pre-trained models.
+    let mean = [0.485f32, 0.456, 0.406];
+    let std  = [0.229f32, 0.224, 0.225];
 
-    let mut tensor = ndarray::Array4::<f32>::zeros((1, 3, 1024, 1024));
-    for y in 0..1024usize {
-        for x in 0..1024usize {
+    for y in 0..320usize {
+        for x in 0..320usize {
             let pixel = rgb.get_pixel(x as u32, y as u32);
             for c in 0..3usize {
                 tensor[[0, c, y, x]] = (pixel[c] as f32 / 255.0 - mean[c]) / std[c];
@@ -208,20 +212,27 @@ pub async fn remove_handler(
         .try_extract_array::<f32>()
         .map_err(|e| AppError::Internal(format!("Failed to read output array: {}", e)))?;
 
-    // ── 7. Normalise and apply contrast threshold to the mask ──────────────────
-    let mut mask_img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(1024, 1024);
-    for y in 0..1024u32 {
-        for x in 0..1024u32 {
+    // ── 7. Normalise and extract the mask ──────────────────
+    let mut mask_img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(320, 320);
+    
+    // Find min and max for normalization
+    let mut min_val = f32::MAX;
+    let mut max_val = f32::MIN;
+    for y in 0..320u32 {
+        for x in 0..320u32 {
             let val = mask_view[[0, 0, y as usize, x as usize]];
-            // Remove low-probability background noise (val < 0.15) and stabilize foreground (val > 0.85)
-            let normalised = if val < 0.15 {
-                0.0
-            } else if val > 0.85 {
-                1.0
-            } else {
-                (val - 0.15) / 0.70
-            };
-            mask_img.put_pixel(x, y, Luma([(normalised * 255.0) as u8]));
+            if val < min_val { min_val = val; }
+            if val > max_val { max_val = val; }
+        }
+    }
+
+    let range = if max_val - min_val < 1e-5 { 1.0 } else { max_val - min_val };
+
+    for y in 0..320u32 {
+        for x in 0..320u32 {
+            let val = mask_view[[0, 0, y as usize, x as usize]];
+            let normalized = (val - min_val) / range;
+            mask_img.put_pixel(x, y, Luma([(normalized * 255.0) as u8]));
         }
     }
 
@@ -231,11 +242,11 @@ pub async fn remove_handler(
 
     // ── 8. Resize mask back to original dimensions ────────────────────────────
     let mask_resized = DynamicImage::ImageLuma8(mask_img)
-        .resize_exact(original_width, original_height, image::imageops::FilterType::CatmullRom)
+        .resize_exact(original_width, original_height, image::imageops::FilterType::Triangle)
         .to_luma8();
 
     // ── 9. Compositing — apply mask to original image with selected bg ─────────
-    let mut rgba_img = original_img.to_rgba8();
+    let mut rgba_img = original_img.into_rgba8();
     for y in 0..original_height {
         for x in 0..original_width {
             let mask_val = mask_resized.get_pixel(x, y)[0] as f32 / 255.0;
@@ -259,6 +270,9 @@ pub async fn remove_handler(
             }
         }
     }
+
+    // Drop the mask buffer early to free up memory before PNG encoding
+    drop(mask_resized);
 
     // ── 10. Encode to PNG ─────────────────────────────────────────────────────
     let mut output_bytes = Vec::new();
